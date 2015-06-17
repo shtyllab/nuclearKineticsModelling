@@ -158,7 +158,11 @@ void writePartialData(const float_T t) {
    *     written.
    * Output: (none)
    */
-  file<<t<<","<<proNucPos <<","<< psi <<","<< basePosM <<","<< basePosD << endl;
+ // file<<t<<","<<proNucPos <<","<< psi <<","<< basePosM <<","<< basePosD << endl;
+  file << t <<","<< proNucPos <<","<< psi <<","<<  MT_Pos_M <<",";
+  file << MT_Pos_D <<","<< force_M <<","<< force_D <<","<< force <<",";
+  file << torque_M <<","<< torque_D <<","<< torque <<","<< basePosM <<",";
+  file << basePosD << endl; //VCC using temp to write smaller movie output files
 }
 
 void mtForceCalcM()
@@ -192,14 +196,21 @@ void mtForceCalcM()
     float_T angle = atan2(MT_Pos_M[i][1],MT_Pos_M[i][0]);
       
     if (angle < 0) angle += 2*pi;
+    if (angle >= 2*pi) angle -= 2*pi; //VCC
 
-      //Now we find the multiplier:
-      if (MT_Contact_M[i]>0)  multiplier = F_MT_pull; //Pull force multiplier
-      if (MT_Contact_M_push[i]>0)  multiplier = -1*F_MT_push; //Push force multiplier
-      
-    //for (size_t i = 1; i <= numRegions; ++i)
-     // if (angle < regionAngles[i] && angle >= regionAngles[i-1])
-      //   multiplier = regionForceMultipliers[i-1];
+  
+      //Now we find the multipliers:
+    for (size_t j = 1; j <= numRegions; ++j)
+      if (angle < regionAngles[j] && angle >= regionAngles[j-1]) {
+		  if (regionForceMultipliers[j-1]<0)
+		  multiplier = regionForceMultipliers[j-1]*F_MT_push;
+          if (regionForceMultipliers[j-1]>0){
+		  //multiplier = F_MT_pull;
+          if (MT_Contact_M[i]>0)  multiplier = regionForceMultipliers[j-1]*F_MT_pull; //Pull force multiplier
+          if (MT_Contact_M_push[i]>0)  multiplier = -1*regionForceMultipliers[j-1]*F_MT_push; //Push force multiplier
+          }
+       }
+
 
     //Grabbing the unit vector associated with the mt...
     vec_T mtUnitVec = (MT_Pos_M[i] - basePosM).normalize();
@@ -238,15 +249,21 @@ void mtForceCalcD()
     //3D WARNING: This section would have to update when changing to 3d.
     float_T angle = atan2(MT_Pos_D[i][1],MT_Pos_D[i][0]);
     if (angle < 0) angle += 2*pi;
+    if (angle >= 2*pi) angle -= 2*pi; //VCC
 
-    //Now we find the multiplier:
-      if (MT_Contact_D[i]>0)  multiplier = F_MT_pull; //Pull force multiplier
-      if (MT_Contact_D_push[i]>0)  multiplier = -1*F_MT_push; //Push force multiplier
-      
-    //Now check to see if we are in a push band region
-    //for (size_t i = 1; i <= numRegions; ++i)
-    //  if (angle < regionAngles[i] && angle >= regionAngles[i-1])
-      //  multiplier = regionForceMultipliers[i-1];
+    //Now we find the multipliers
+    for (size_t j = 1; j <= numRegions; ++j)
+      if (angle < regionAngles[j] && angle >= regionAngles[j-1]) {
+		  if (regionForceMultipliers[j-1]<0)
+		  multiplier = regionForceMultipliers[j-1]*F_MT_push;
+          if (regionForceMultipliers[j-1]>0){
+		  //multiplier = F_MT_pull;
+          if (MT_Contact_D[i]>0)  multiplier = regionForceMultipliers[j-1]*F_MT_pull; //Pull force multiplier
+          if (MT_Contact_D_push[i]>0)  multiplier = -1*regionForceMultipliers[j-1]*F_MT_push; //Push force multiplier
+          }
+      }
+
+      //multiplier = regionForceMultipliers[i-1];
 
     //Grabbing the unit vector associated with the mt...
     vec_T mtUnitVec = (MT_Pos_D[i] - basePosD).normalize();
@@ -400,8 +417,11 @@ void updatePNPos() {
   }
 
   //Calculating Displacements:
-  if (translation) 
+  if (translation) {
     proNucPos += (1.0/Eta)*Tau*force;
+    basePosM = proNucPos + proNucRad;
+    basePosD = proNucPos - proNucRad;
+   }
 
   torque = torque_M + torque_D;
   psi += (1/Mu)*torque*Tau;
@@ -525,6 +545,7 @@ void mtContactTest(const MTOC centrosome, const unsigned i) {
       //the cortex. It only works in 2D right now. 
       angleM = atan2(MT_Pos_M[i][1],MT_Pos_M[i][0]);
       if (angleM < 0) angleM += 2*pi; //atan2 returns negative vals.
+      if (angleM >= 2*pi) angleM -= 2*pi; //VCC
       if (testStat() < probContact(angleM)) {
           
         MT_GrowthVel_M[i] = 0;
@@ -545,6 +566,7 @@ void mtContactTest(const MTOC centrosome, const unsigned i) {
       //the cortex. It only works in 2D right now. 
       angleD = atan2(MT_Pos_D[i][1],MT_Pos_D[i][0]);
       if (angleD < 0) angleD += 2*pi; //atan2 returns negative vals.
+      if (angleD >= 2*pi) angleD -= 2*pi; //VCC
       if (testStat() < probContact(angleD)) {
           
         MT_GrowthVel_D[i] = 0;
@@ -580,6 +602,8 @@ void respawnMTB(vec_T& vec, const float_T ang, const float_T envelope[2]) {
   float_T randT = testStat();
   float_T r     = sqrt(randR);
   float_T t     = (envelope[1]-envelope[0])*randT + ang + envelope[0] - pi/2.0;
+  if (t<0) t+=2*pi; //ATD VCC
+  if (t>=2*pi) t-=2*pi; //ATD VCC
   vec           = Vector({r*cos(t),r*sin(t)});
 }
 
@@ -645,7 +669,7 @@ void runModel(bool writeAllData, bool writeTempData) {
 
   //First, we set up the data writing parameters: 
   float_T nextWrite = 0;
-  float_T writeInterval = 0.5;
+  float_T writeInterval = 0.025; //VCC using temp to write smaller movie output files
   if (writeAllData) {
     //We only need to write the full data if writeAllData is true. 
     writeData(0);
@@ -675,6 +699,9 @@ void runModel(bool writeAllData, bool writeTempData) {
     while (psi < 0)
       psi += 2*pi;
 
+     vec_T basePosMOld=basePosM;
+     vec_T basePosDOld=basePosD;
+
     //As MT_numb \to \infty, we'll have to calculate force/torque more and more
     //often. As such, we'll just go ahead and calculate it every time here. 
     updatePNPos();
@@ -685,8 +712,14 @@ void runModel(bool writeAllData, bool writeTempData) {
     for (size_t i = 0; i < MT_numb_M; ++i) {
       //These are the relative positions of the MTs
       vec_T vecM;
-      //Setting them properly. 
-      vecM = MT_Pos_M[i] - basePosM;
+      //Setting them properly. Moving with pronucleus if there is no contact, stretching if there is contact with the cortex
+      if(MT_Contact_M[i]>0 || MT_Contact_M_push[i]>0) {
+         vecM = MT_Pos_M[i] - basePosM; }
+      else {
+         vecM = MT_Pos_M[i] - basePosMOld; }//BS: THis is a bit suspicious since the vector is staying put while the PN moves.
+	  //Instead the MT tip position needs to be shifted by the same amount at the pronucleus translation to preserve full vector
+	  //translation. I propose that vecM = MT_Pos_M[i]+ (basePosM-basePosMOld); since (basePosM-basePosMold) is the translational
+	  //difference in the PN position updates.
 
       //Grabbing their relative magnitudes. 
       float_T mag_M = vecM.norm();
@@ -697,11 +730,18 @@ void runModel(bool writeAllData, bool writeTempData) {
       //positions. 
       float_T angleM = atan2(vecM[1],vecM[0]);
       if (angleM < 0) angleM += 2*pi;
+      if (angleM >= 2*pi) angleM -= 2*pi; //VCC
       //angleM gives us the cartesian angle of the MT relative to the
       //Pronucleus, but we really want to use a rotated axis system that aligns
       //with the pronucleus. The Mt base points are offset by $\pi/2$, and we
       //have $\psi$, so some simple geometry shows
-      //float_T thetaM = angleM - (psi - pi/2.0);
+      float_T thetaM = angleM - (psi - pi/2.0);
+      if (thetaM < 0) thetaM += 2*pi; //ATD VCC
+      if (thetaM >= 2*pi) thetaM -= 2*pi; //ATD VCC
+
+      if (mag_M < 0.2 || ((thetaM < envelopeM[0]-0.05*pi) || (thetaM > envelopeM[1]+0.05*pi))) //ATD
+        respawnMT(M_CENTROSOME, vecM, i, envelopeM); //ATD
+
 
       //MT-ENV: Different MT growth envelope handling would go here, though it
       //currently isn't used beyond spawning new MTS.
@@ -761,6 +801,7 @@ void runModel(bool writeAllData, bool writeTempData) {
           MT_GrowthVel_M[i] = -Vs_c;
           float_T angleM = atan2(MT_Pos_M[i][1],MT_Pos_M[i][0]);
           if (angleM < 0) angleM += 2*pi;
+          if (angleM >= 2*pi) angleM -= 2*pi; //VCC
           removeContact(angleM);
         }
       } else if (MT_Contact_M_push[i] > 0) {
@@ -776,6 +817,7 @@ void runModel(bool writeAllData, bool writeTempData) {
               MT_GrowthVel_M[i] = -Vs_c;
               float_T angleM = atan2(MT_Pos_M[i][1],MT_Pos_M[i][0]);
               if (angleM < 0) angleM += 2*pi;
+              if (angleM >= 2*pi) angleM -= 2*pi; //VCC
           }
       } else  if (magScaledM >= 1) {
         //If we haven't made contact, but are touching the cortex, we will test
@@ -812,7 +854,14 @@ void runModel(bool writeAllData, bool writeTempData) {
       //These are the relative positions of the MTs
       vec_T vecD;
       //Setting them properly. 
-      vecD = MT_Pos_D[i] - basePosD;
+      //vecD = MT_Pos_D[i] - basePosDold;
+      //Setting them properly. Moving with pronucleus if there is no contact, stretching if there is contact with the cortex
+      if(MT_Contact_D[i]>0 || MT_Contact_D_push[i]>0) {
+         vecD = MT_Pos_D[i] - basePosD; }
+      else {
+         vecD = MT_Pos_D[i] - basePosDOld; }
+		  
+
 
       //Grabbing their relative magnitudes. 
       float_T mag_D = vecD.norm();
@@ -823,11 +872,17 @@ void runModel(bool writeAllData, bool writeTempData) {
       //positions. 
       float_T angleD = atan2(vecD[1],vecD[0]);
       if (angleD < 0) angleD += 2*pi;
+      if (angleD >= 2*pi) angleD -= 2*pi; //VCC
       //angleD gives us the cartesian angle of the MT relative to the
       //Pronucleus, but we really want to use a rotated axis system that aligns
       //with the pronucleus. The Mt base points are offset by $\pi/2$, and we
       //have $\psi$, so some simple geometry shows
-      //float_T thetaD = angleD - (psi + pi/2.0);
+      float_T thetaD = angleD - (psi + pi/2.0);
+      if (thetaD < 0) thetaD += 2*pi; //ATD VCC
+      if (thetaD >= 2*pi) thetaD -= 2*pi; //ATD VCC
+
+      if (mag_D < 0.2 || ((thetaD < envelopeD[0]-0.05*pi) || (thetaD > envelopeD[1]+0.05*pi))) //ATD
+        respawnMT(D_CENTROSOME, vecD, i, envelopeD); //ATD
 
       //MT-ENV: Different MT growth envelope handling would go here, though it
       //currently isn't used beyond spawning new MTS.
@@ -888,6 +943,7 @@ void runModel(bool writeAllData, bool writeTempData) {
                 MT_GrowthVel_D[i] = -Vs_c;
                 float_T angleD = atan2(MT_Pos_D[i][1],MT_Pos_D[i][0]);
                 if (angleD < 0) angleD += 2*pi;
+                if (angleD >= 2*pi) angleD -= 2*pi; //VCC
                 removeContact(angleD);
             }
         } else if (MT_Contact_D_push[i] > 0){
@@ -903,7 +959,7 @@ void runModel(bool writeAllData, bool writeTempData) {
                 MT_GrowthVel_D[i] = -Vs_c;
                 float_T angleD = atan2(MT_Pos_D[i][1],MT_Pos_D[i][0]);
                 if (angleD < 0) angleD += 2*pi;
-                
+                if (angleD >= 2*pi) angleD -= 2*pi; //VCC
             }
         } else  if (magScaledD >= 1) {
                 //If we haven't made contact, but are touching the cortex, we will test
@@ -973,12 +1029,12 @@ int numContacts() {
   return count;
 }
 
-void test() {
+//void test() {
   /* test: This is a dummy function useful for testing changes to the code. 
    * Inputs: (none, currently)
    * Output: (none, currently)
    */
-}
+//}
 
 int main(int argc, const char* argv[]) {
   /* main: This is the main function, run when you call the program as an
