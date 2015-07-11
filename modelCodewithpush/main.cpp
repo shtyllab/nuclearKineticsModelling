@@ -158,7 +158,7 @@ void writePartialData(const float_T t) {
    *     written.
    * Output: (none)
    */
- // file<<t<<","<<proNucPos <<","<< psi <<","<< basePosM <<","<< basePosD << endl;
+  //file<<t<<","<<proNucPos <<","<< psi <<","<<torque<<endl; //<<","<<MT_Contact_M<<","<<MT_Contact_D<<endl;
   file << t <<","<< proNucPos <<","<< psi <<","<<  MT_Pos_M <<",";
   file << MT_Pos_D <<","<< force_M <<","<< force_D <<","<< force <<",";
   file << torque_M <<","<< torque_D <<","<< torque <<","<< basePosM <<",";
@@ -259,7 +259,7 @@ void mtForceCalcD()
           if (regionForceMultipliers[j-1]>0){
 		  //multiplier = F_MT_pull;
           if (MT_Contact_D[i]>0)  multiplier = regionForceMultipliers[j-1]*F_MT_pull; //Pull force multiplier
-          if (MT_Contact_D_push[i]>0)  multiplier = -1*regionForceMultipliers[j-1]*F_MT_push; //Push force multiplier
+        if (MT_Contact_D_push[i]>0)  multiplier = -1*regionForceMultipliers[j-1]*F_MT_push; //Push force multiplier
           }
       }
 
@@ -560,6 +560,7 @@ void mtContactTest(const MTOC centrosome, const unsigned i) {
           MT_Growing_M[i]   = false;
           
       }
+          
       break;
     case D_CENTROSOME:
       //3D WARNING: The code below is used to determine the point of contact on
@@ -582,6 +583,7 @@ void mtContactTest(const MTOC centrosome, const unsigned i) {
          
           
       }
+         
       break;
   }
 }
@@ -669,7 +671,7 @@ void runModel(bool writeAllData, bool writeTempData) {
 
   //First, we set up the data writing parameters: 
   float_T nextWrite = 0;
-  float_T writeInterval = 0.025; //VCC using temp to write smaller movie output files
+  float_T writeInterval = 0.5; //VCC using temp to write smaller movie output files
   if (writeAllData) {
     //We only need to write the full data if writeAllData is true. 
     writeData(0);
@@ -701,6 +703,7 @@ void runModel(bool writeAllData, bool writeTempData) {
 
      vec_T basePosMOld=basePosM;
      vec_T basePosDOld=basePosD;
+     float_T psiOld=psi;//ATD
 
     //As MT_numb \to \infty, we'll have to calculate force/torque more and more
     //often. As such, we'll just go ahead and calculate it every time here. 
@@ -712,15 +715,81 @@ void runModel(bool writeAllData, bool writeTempData) {
     for (size_t i = 0; i < MT_numb_M; ++i) {
       //These are the relative positions of the MTs
       vec_T vecM;
-      //Setting them properly. Moving with pronucleus if there is no contact, stretching if there is contact with the cortex
+      vec_T vecMNew;
+      float_T angle_rotM;
+      float_T xNewM;
+      float_T yNewM;
+      int rot_counterM;
+      float_T magScaledM;
+        
+     
+        
+      //Setting them properly. Rotating with pronucleus if there is no contact, stretching if there is contact with the cortex
       if(MT_Contact_M[i]>0 || MT_Contact_M_push[i]>0) {
          vecM = MT_Pos_M[i] - basePosM; }
       else {
-         vecM = MT_Pos_M[i] - basePosMOld; }//BS: THis is a bit suspicious since the vector is staying put while the PN moves.
-	  //Instead the MT tip position needs to be shifted by the same amount at the pronucleus translation to preserve full vector
-	  //translation. I propose that vecM = MT_Pos_M[i]+ (basePosM-basePosMOld); since (basePosM-basePosMold) is the translational
-	  //difference in the PN position updates.
-
+          
+           rot_counterM=1;
+          
+        //Rigidly rotate the MTs
+          
+        //Old MT vector
+          vecM = MT_Pos_M[i] - basePosMOld;
+         
+          float_T magScaledMtest = sqrt(pow(MT_Pos_M[i][0]/R1_max,2) + pow(MT_Pos_M[i][1]/R2_max,2));//BSH
+          
+          if (magScaledMtest>=1)
+          {
+              cout<<"length exceeding boundary before rotation"<<magScaledMtest<<endl;
+          }
+          
+         //Rotate the vector with the same angle as the pronucleus
+         vecMNew[0] = cos(psi-psiOld)*vecM[0]-sin(psi-psiOld)*vecM[1];//ATD
+         vecMNew[1] = sin(psi-psiOld)*vecM[0]+cos(psi-psiOld)*vecM[1];//ATD
+          
+          //Updating the endpoint positions for the MT.
+          xNewM = basePosM[0] + vecMNew[0];//BSH
+          yNewM = basePosM[1] + vecMNew[1];//BSH
+          
+          //Computing their scaled real magnitudes (scaled via the ellipse), so as
+          //to determine if a contact has occurred.
+          magScaledM = sqrt(pow(xNewM/R1_max,2) + pow(yNewM/R2_max,2));//BSH
+          
+          // Check to see if the rotated MT has exceeded the cortical boundary. If so, atempt to reduce MT end rotation angle by incremental reduction in rotation angle
+          if (magScaledM>=max_rot_mag){
+              
+          while (magScaledM >=max_rot_mag && rot_counterM <max_rot_count) {
+              angle_rotM = (psi-psiOld)/rot_counterM;
+              rot_counterM+=1;}//BSH
+              //Adjust the rotation at the cortical MT endpoint- note this might induce length stretching of MT.
+             vecMNew[0] = MT_Pos_M[i][0] - basePosM[0];//BSH
+             vecMNew[1] = sin(angle_rotM)*vecM[0]+cos(angle_rotM)*vecM[1];//BSH
+              
+            magScaledM=sqrt(pow(MT_Pos_M[i][0]/R1_max,2) + pow((vecMNew[1]+ basePosM[1])/R2_max,2));
+          }
+          
+          //rotation trial exceeded, keep the old vector end and shift the [0] entry to stretch.
+          if (rot_counterM==max_rot_count){
+              vecMNew[0]= MT_Pos_M[i][0]-basePosM[0];
+              vecMNew[1]=vecM[1];//BSH
+              magScaledM = sqrt(pow(MT_Pos_M[i][0]/R1_max,2) + pow(MT_Pos_M[i][1]/R2_max,2));
+              
+             
+          }
+          
+        //Print some results to check if cortex is crossed
+        if (magScaledM>1){
+              cout<<"length exceeding boundary after rotation"<<magScaledM<<endl;
+              cout<<"number of iterations"<<rot_counterM<<endl;
+          }
+          
+          
+         vecM = vecMNew;//ATD
+          
+      }
+        
+       
+        
       //Grabbing their relative magnitudes. 
       float_T mag_M = vecM.norm();
 
@@ -751,8 +820,7 @@ void runModel(bool writeAllData, bool writeTempData) {
           
         respawnMT(M_CENTROSOME, vecM, i, envelopeM);
           
-         // if (MT_Contact_M_push[i]>0)
-        //respawnMT(M_CENTROSOME, vecM, i, envelopeM);
+         
       }
 
       //Growing or Shrinking the MT. 
@@ -762,7 +830,25 @@ void runModel(bool writeAllData, bool writeTempData) {
       MT_Pos_M[i][0] = basePosM[0] + vecM[0];
       MT_Pos_M[i][1] = basePosM[1] + vecM[1];
 
-      //Now, for state updating, I'll need a random number. 
+        //Computing their scaled real magnitudes (scaled via the ellipse), so as
+        //to determine if a contact has occurred.
+        magScaledM = sqrt(pow(MT_Pos_M[i][0]/R1_max,2) +
+                          pow(MT_Pos_M[i][1]/R2_max,2));
+        
+        //Shrink the growing MT to be close to the boundary.
+        while (magScaledM>1.001) {
+            
+            //Shrinking the MT.
+            advanceMT(-Vs/100, vecM, mag_M);//BSH
+            //Updating the endpoint positions to retest.
+            MT_Pos_M[i][0] = basePosM[0] + vecM[0];
+            MT_Pos_M[i][1] = basePosM[1] + vecM[1];
+            mag_M = vecM.norm();
+            magScaledM = sqrt(pow(MT_Pos_M[i][0]/R1_max,2) + pow(MT_Pos_M[i][1]/R2_max,2));
+            
+        }
+        
+      //Now, for state updating, I'll need a random number.
       //For modularity, I'll declare the stat first. 
       float_T test;
 
@@ -781,10 +867,7 @@ void runModel(bool writeAllData, bool writeTempData) {
         }
       }
 
-      //Computing their scaled real magnitudes (scaled via the ellipse), so as
-      //to determine if a contact has occurred.  
-      float_T magScaledM = sqrt(pow(MT_Pos_M[i][0]/R1_max,2) + 
-                                pow(MT_Pos_M[i][1]/R2_max,2));
+      
 
       //Updating Contact Indicator:
       if (MT_Contact_M[i] > 0) {
@@ -799,12 +882,34 @@ void runModel(bool writeAllData, bool writeTempData) {
           //and just handle the overall contact-ended case here. 
           MT_Contact_M[i] = 0;
           MT_GrowthVel_M[i] = -Vs_c;
+            
+         
+            
           float_T angleM = atan2(MT_Pos_M[i][1],MT_Pos_M[i][0]);
           if (angleM < 0) angleM += 2*pi;
           if (angleM >= 2*pi) angleM -= 2*pi; //VCC
+            
           removeContact(angleM);
-        }
-      } else if (MT_Contact_M_push[i] > 0) {
+            
+            //Now shrink the MT to the cortex immediately to avoid exceeding cortical boundary upon rotation
+            //This is a bit overkill but just in case
+            
+            while (magScaledM>1) {
+                
+                //Shrinking the MT.
+                advanceMT(MT_GrowthVel_M[i], vecM, mag_M);//BSH
+                //Updating the endpoint positions to retest.
+                MT_Pos_M[i][0] = basePosM[0] + vecM[0];
+                MT_Pos_M[i][1] = basePosM[1] + vecM[1];
+                mag_M = vecM.norm();
+                magScaledM = sqrt(pow(MT_Pos_M[i][0]/R1_max,2) + pow(MT_Pos_M[i][1]/R2_max,2));
+                
+            }
+           
+          }
+          
+          
+        } else if (MT_Contact_M_push[i] > 0) {
           //If we've already made contact, then we need to reduce the contact time
           //by the length of the time step.
           MT_Contact_M_push[i] -= Tau;
@@ -815,53 +920,115 @@ void runModel(bool writeAllData, bool writeTempData) {
               //and just handle the overall contact-ended case here.
               MT_Contact_M_push[i] = 0;
               MT_GrowthVel_M[i] = -Vs_c;
+              
+              //Now shrink the MT to the cortex immediately to avoid exceeding cortical boundary upon rotation
+              //This is a bit overkill but just in case BSH
+             
+              
               float_T angleM = atan2(MT_Pos_M[i][1],MT_Pos_M[i][0]);
               if (angleM < 0) angleM += 2*pi;
               if (angleM >= 2*pi) angleM -= 2*pi; //VCC
+              
+              while (magScaledM>1) {
+                  
+                  //Shrinking the MT.
+                  advanceMT(MT_GrowthVel_M[i], vecM, mag_M);//BSH
+                  //Updating the endpoint positions to retest.
+                  MT_Pos_M[i][0] = basePosM[0] + vecM[0];
+                  MT_Pos_M[i][1] = basePosM[1] + vecM[1];
+                  mag_M = vecM.norm();
+                  magScaledM = sqrt(pow(MT_Pos_M[i][0]/R1_max,2) + pow(MT_Pos_M[i][1]/R2_max,2));
+                  
+              }
+              
+              
           }
-      } else  if (magScaledM >= 1) {
+      } else if (magScaledM >= 1) {
         //If we haven't made contact, but are touching the cortex, we will test
-        //for contact. 
+        //for contact.
+          
         mtContactTest(M_CENTROSOME, i);
+          
+         
       }
-    
         
-        //Updating Contact Indicator:
-      //  if (MT_Contact_M_push[i] > 0) {
-            //If we've already made contact, then we need to reduce the contact time
-            //by the length of the time step.
-        //    MT_Contact_M_push[i] -= Tau;
-          //  if (MT_Contact_M_push[i] <= 0) {
-                //But, occasionally, this will actually drop our proposed contact time
-                //down into the negatives. We need to correct for that. Moreover, we
-                //can combine that with the case where we hit zero right on the head,
-                //and just handle the overall contact-ended case here.
-            //    MT_Contact_M_push[i] = 0;
-              //  MT_GrowthVel_M[i] = -Vs_c;
-              //  float_T angleM = atan2(MT_Pos_M[i][1],MT_Pos_M[i][0]);
-               // if (angleM < 0) angleM += 2*pi;
-            //}
-            //} else  if (magScaledM >= 1) {
-                //If we haven't made contact, but are touching the cortex, we will test
-                //for contact. 
-           //     mtContactTest(M_CENTROSOME, i);
-            //}
-    }
+        
+        //Print some results to check if cortex is crossed
+        //if (magScaledM>1){
+        //    cout<<"length exceeding boundary before rotation"<<magScaledM<<endl;
+        //}
+
+        
+       }
     
       
     //Loop through the daughter cell MTs
     for (size_t i = 0; i < MT_numb_D; ++i) {
       //These are the relative positions of the MTs
       vec_T vecD;
-      //Setting them properly. 
-      //vecD = MT_Pos_D[i] - basePosDold;
-      //Setting them properly. Moving with pronucleus if there is no contact, stretching if there is contact with the cortex
+      vec_T vecDNew;//ATD
+      float_T angle_rotD;
+      float_T xNewD;
+      float_T yNewD;
+      float_T magScaledD;
+      int rot_counterD;
+        
+        
+    //Setting them properly. Moving with pronucleus if there is no contact, stretching if there is contact with the cortex
       if(MT_Contact_D[i]>0 || MT_Contact_D_push[i]>0) {
          vecD = MT_Pos_D[i] - basePosD; }
       else {
-         vecD = MT_Pos_D[i] - basePosDOld; }
-		  
-
+          rot_counterD=1;
+        //Rigidly rotate the MTs that are not in contact with the cortex
+         vecD = MT_Pos_D[i] - basePosDOld;
+          
+          float_T magScaledDtest = sqrt(pow(MT_Pos_D[i][0]/R1_max,2) + pow(MT_Pos_D[i][1]/R2_max,2));//BSH
+          
+          if (magScaledDtest>=1)
+          {
+              cout<<"length exceeding boundary before rotation"<<magScaledDtest<<endl;
+          }
+          
+         vecDNew[0] = cos(psi-psiOld)*vecD[0]-sin(psi-psiOld)*vecD[1];//ATD
+         vecDNew[1] = sin(psi-psiOld)*vecD[0]+cos(psi-psiOld)*vecD[1];//ATD
+          
+          //Updating the endpoint positions.
+          xNewD = basePosD[0] + vecDNew[0];//BSH
+          yNewD = basePosD[1] + vecDNew[1];//BSH
+          
+          //Computing their scaled real magnitudes (scaled via the ellipse), so as
+          //to determine if a contact has occurred.
+          magScaledD = sqrt(pow(xNewD/R1_max,2) + pow(yNewD/R2_max,2));//BSH
+          
+          // Atempt to reduce MT end rotation angle in case the MT length exceeds the cortex distance
+          if (magScaledD>=max_rot_mag){
+              while (magScaledD >=max_rot_mag && rot_counterD <max_rot_count) {
+                  angle_rotD = (psi-psiOld)/rot_counterD;
+                  rot_counterD+=1;}//BSH
+            //Adjust the rotation at the MT endpoint- note this might induce length stretching of MT.
+              vecDNew[0] = MT_Pos_D[i][0] - basePosD[0];//BSH
+              vecDNew[1] = sin(angle_rotD)*vecD[0]+cos(angle_rotD)*vecD[1];//BSH
+              
+              magScaledD=sqrt(pow(MT_Pos_D[i][0]/R1_max,2) + pow((vecDNew[1]+ basePosD[1])/R2_max,2));
+              }
+          //rotation trials exceeded, return to old vector end, but shift and stretch the [0] entry.
+          if (rot_counterD==max_rot_count){
+              vecDNew[0]= MT_Pos_D[i][0]-basePosD[0];//BSH
+              vecDNew[1]=vecD[1];//BSH
+              
+              magScaledD = sqrt(pow(MT_Pos_D[i][0]/R1_max,2) + pow(MT_Pos_D[i][1]/R2_max,2));//BSH
+              
+          }
+          
+          //Print some results to check if cortex is crossed
+          if (magScaledD>1){
+              cout<<"length exceeding boundary after rotation"<<magScaledD<<endl;
+              cout<<"number of iterations"<<rot_counterD<<endl;
+          }
+         
+         vecD = vecDNew;//ATD
+          
+       }
 
       //Grabbing their relative magnitudes. 
       float_T mag_D = vecD.norm();
@@ -904,8 +1071,26 @@ void runModel(bool writeAllData, bool writeTempData) {
       MT_Pos_D[i][0] = basePosD[0] + vecD[0];
       MT_Pos_D[i][1] = basePosD[1] + vecD[1];
 
-      //Now, for state updating, I'll need a random number. 
-      //For modularity, I'll declare the stat first. 
+        //Computing their scaled real magnitudes (scaled via the ellipse), so as
+        //to determine if a contact has occurred.
+        magScaledD = sqrt(pow(MT_Pos_D[i][0]/R1_max,2) +
+                          pow(MT_Pos_D[i][1]/R2_max,2));
+
+        //Crop the MTs to be within a certain distance of the cortex if growth is taking place
+        while (magScaledD>1.001) {
+            
+            //Growing or Shrinking the MT.
+            advanceMT(-Vs/100, vecD, mag_D);//BSH
+            //Updating the endpoint positions.
+            MT_Pos_D[i][0] = basePosD[0] + vecD[0];
+            MT_Pos_D[i][1] = basePosD[1] + vecD[1];
+            mag_D = vecD.norm();
+            magScaledD = sqrt(pow(MT_Pos_D[i][0]/R1_max,2) + pow(MT_Pos_D[i][1]/R2_max,2));
+            
+        }
+        
+      //Now, for state updating, I'll need a random number.
+      //For modularity, I'll declare the stat first.
       float_T test;
 
       test = testStat();
@@ -921,11 +1106,7 @@ void runModel(bool writeAllData, bool writeTempData) {
         }
       }
 
-      //Computing their scaled real magnitudes (scaled via the ellipse), so as
-      //to determine if a contact has occurred.  
-      float_T magScaledD = sqrt(pow(MT_Pos_D[i][0]/R1_max,2) + 
-                                pow(MT_Pos_D[i][1]/R2_max,2));
-
+      
       //Updating Contact Indicator:
       //The if clause below is identical to the one above, just for the D
       //centrosome over the M centrosome. 
@@ -945,6 +1126,20 @@ void runModel(bool writeAllData, bool writeTempData) {
                 if (angleD < 0) angleD += 2*pi;
                 if (angleD >= 2*pi) angleD -= 2*pi; //VCC
                 removeContact(angleD);
+                
+                //Now shrink the MT to the cortex to avoid exceeding the boundary upon rotation
+                //Again this is prob not necessary, but just in case. BSH
+                while (magScaledD>1) {
+                    
+                    //Growing or Shrinking the MT.
+                    advanceMT(MT_GrowthVel_D[i], vecD, mag_D);//BSH
+                    //Updating the endpoint positions.
+                    MT_Pos_D[i][0] = basePosD[0] + vecD[0];
+                    MT_Pos_D[i][1] = basePosD[1] + vecD[1];
+                    mag_D = vecD.norm();
+                    magScaledD = sqrt(pow(MT_Pos_D[i][0]/R1_max,2) + pow(MT_Pos_D[i][1]/R2_max,2));
+                    
+                }
             }
         } else if (MT_Contact_D_push[i] > 0){
             //If we've already made contact, then we need to reduce the contact time
@@ -960,36 +1155,34 @@ void runModel(bool writeAllData, bool writeTempData) {
                 float_T angleD = atan2(MT_Pos_D[i][1],MT_Pos_D[i][0]);
                 if (angleD < 0) angleD += 2*pi;
                 if (angleD >= 2*pi) angleD -= 2*pi; //VCC
+                
+                
+                //Now shrink the MT to the cortex to avoid exceeding the boundary upon rotation
+                //Again this is prob not necessary, but just in case. BSH
+                while (magScaledD>1) {
+                    
+                    //Growing or Shrinking the MT.
+                    advanceMT(MT_GrowthVel_D[i], vecD, mag_D);//BSH
+                    //Updating the endpoint positions.
+                    MT_Pos_D[i][0] = basePosD[0] + vecD[0];
+                    MT_Pos_D[i][1] = basePosD[1] + vecD[1];
+                    mag_D = vecD.norm();
+                    magScaledD = sqrt(pow(MT_Pos_D[i][0]/R1_max,2) + pow(MT_Pos_D[i][1]/R2_max,2));
+                    
+                }
             }
         } else  if (magScaledD >= 1) {
                 //If we haven't made contact, but are touching the cortex, we will test
                 //for contact. 
                 mtContactTest(D_CENTROSOME, i);
             }
+    
+        //Print some results to check if cortex is crossed
+        //if (magScaledD>1){
+        //    cout<<"length exceeding boundary before rotation"<<magScaledD<<endl;
+        //}
         
-        
-        //Updating Contact Indicator:
-       // if (MT_Contact_D_push[i] > 0) {
-            //If we've already made contact, then we need to reduce the contact time
-            //by the length of the time step.
-         //   MT_Contact_D_push[i] -= Tau;
-           // if (MT_Contact_D_push[i] <= 0) {
-                //But, occasionally, this will actually drop our proposed contact time
-                //down into the negatives. We need to correct for that. Moreover, we
-                //can combine that with the case where we hit zero right on the head,
-                //and just handle the overall contact-ended case here.
-             //   MT_Contact_D_push[i] = 0;
-               // MT_GrowthVel_D[i] = -Vs_c;
-              //  float_T angleD = atan2(MT_Pos_D[i][1],MT_Pos_D[i][0]);
-                //if (angleD < 0) angleD += 2*pi;
-               
-              //}
-            //} else  if (magScaledD >= 1) {
-                //If we haven't made contact, but are touching the cortex, we will test
-                //for contact.
-              //  mtContactTest(D_CENTROSOME, i);
-            //}
-    }
+           }
       
     //Now we just need to write our data for this run (if we're supposed to).
     
